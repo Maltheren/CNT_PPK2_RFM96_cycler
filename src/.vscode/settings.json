@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.embeddedhtml": "html",
+        "*.tcc": "cpp",
+        "cmath": "cpp"
+    }
+}
