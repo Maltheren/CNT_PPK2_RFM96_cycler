@@ -5,13 +5,15 @@
 
 
 
-
 char message[] = {0,0,0,0,0,0,0,0,0,0};
 uint8_t nBytes = sizeof(message);
 RFM96 radio = new Module(PIN_RFM_CS, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC);
 
 
 //https://github.com/chandrawi/LoRaRF-Arduino/blob/main/examples/SX126x/SX126x_LoRa_transmitter/SX126x_LoRa_transmitter.ino 
+
+
+
 
 
 void reset_pins(){
@@ -63,26 +65,22 @@ LoRa_settings Settingcycler(uint32_t n, uint32_t *next_n);
 void setup() {
 
   SPI.begin(PIN_RFM_SCK, PIN_RFM_MISO, PIN_RFM_MOSI);
-
   Serial.begin(115200);
   Serial.setTimeout(20);
   
-
 
   while(!Serial){
     delay(100);
   }
 
-  if (radio.begin() != RADIOLIB_ERR_NONE){
-    Serial.println("Fuck!");
 
-    while(true){};
-  }
+  Serial.printf("Initializing radio: %d\n", radio.begin());
+  Serial.print("Setting spi-speed\n");
 
+  SPI.setFrequency(250000);
+  Serial.printf("Setting current limit: %d\n", radio.setCurrentLimit(230));
   
-
-
-
+  Serial.printf("Setting battery low limit: %d\n", radio.setLowBatteryThreshold(-1, RADIOLIB_NC));
   Serial.println("OK");
   }
 
@@ -94,6 +92,7 @@ void loop() { //Rent faktisk test ting
 
   delay(1000);
 
+  
   //Serial.println("Set packet parameters:\n\tExplicit header type\n\tPreamble length = 12\n\tPayload Length = 15\n\tCRC on");
   uint16_t preambleLength = 12;                                       // Set preamble length to 12
   uint8_t payloadLength = sizeof(message);                                         // Initialize payloadLength to 15
@@ -120,16 +119,17 @@ void loop() { //Rent faktisk test ting
 
 
 void perform_cycle(LoRa_settings input, uint16_t package_length){
-  uint8_t sf = input.sf;                                                     // LoRa spreading factor
-  uint32_t bw = input.bw;                                               // Bandwidth: 125 kHz
-  uint8_t cr = input.cr;  
+  uint8_t sf = input.sf;
+  uint32_t bw = input.bw;
+  uint8_t cr = input.cr;
   uint8_t tx_power = input.tx_power;
+  
   radio.setFrequency(433.0);
   radio.setSpreadingFactor(sf);
   radio.setBandwidth(bw);
   radio.setCodingRate(cr);
   radio.setOutputPower(tx_power);
-  radio.setCurrentLimit(230);
+
   
   double br = 0.0;
   uint32_t t_est = radio.getTimeOnAir(package_length);
@@ -142,8 +142,6 @@ void perform_cycle(LoRa_settings input, uint16_t package_length){
   delay(100); //Venter 500ms og så rykker vi radioen
   radio.transmit(message, package_length);
 }
-
-
 
 
 

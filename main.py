@@ -4,7 +4,7 @@ import serial
 import matplotlib.pyplot as plt
 import pandas as pd
 ppk2s_connected = PPK2_API.list_devices()
-
+import numpy as np
 
 print("Select devices")
 print(ppk2s_connected)
@@ -21,8 +21,7 @@ def Perfom_measurement(time, cal_const): ##RUns for the specified time and calcu
     # the sampling rate of the PPK2 is 100 samples per millisecond
     total_samples = []
     ppk2.start_measuring()
-    
-    
+
     while (True):
         raw_data = ppk2.get_data()
         within = False
@@ -93,8 +92,35 @@ def read_esp():
     return temp
 
 
-def runtest():
-    pass
+def run_test(I_comp, range_to_test, outputname):
+    columns = ["n", "sf", "bw", "cr", "pwr", "pa", "br [bits/s]", "t_est [s]", "t_meas [s]", "Q [mC]", "I_avg [mA]"]
+    output = pd.DataFrame(columns=columns)
+
+
+    for n in range_to_test:
+        print("index: {}".format(n))
+        message = "{}".format(n)
+        esp32.write(bytes(message, encoding='ascii')) ##Type conversion magic
+
+        response = read_esp()
+        settings = unpack(response)
+        
+        duration = float(settings[7].rstrip())/1000 #Gets the time in milliseconds
+        
+        i_avg, q, t_meas = Perfom_measurement(duration+500, I_comp)
+        settings.extend([t_meas/1000, q, i_avg])
+        data = {}
+
+        data = {columns[i]: float(settings[i]) for i in range(len(settings))}
+        row = pd.DataFrame([data])  # Wrap the dictionary in a list to ensure proper DataFrame structure
+
+        output = pd.concat([output, row], ignore_index=True)
+        time.sleep(0.5)
+
+
+
+    output.to_csv(outputname)
+
 
 
 
@@ -109,7 +135,7 @@ if __name__ == "__main__":
     # Measure the current draw for said time
     # repeat
     
-    setofN = range(0, 300) ##Indencies to test
+    setofN = range(0, 100) ##Indencies to test
 
 
 
@@ -125,41 +151,18 @@ if __name__ == "__main__":
         print("Weird error with the ESP, trying again")
         line = read_esp()
 
-
-    #We measure silence
-    print("Calibrating")
-    I_compensation, _, _ = Perfom_measurement(4000, 0)
     
-    print("Read quescent current: {:.2f} mA".format(I_compensation))
 
+    for vcc in np.linspace(3300, 1900, 9):
+        #We measure silence
+        print("Setting supply {:.0f}".format(vcc))
+        ppk2.set_source_voltage(int(vcc))  #set  source voltage in mV
+        ppk2.toggle_DUT_power("ON")
+        print("Calibrating")
+        I_compensation, _, _ = Perfom_measurement(4000, 0)
+        print("Read quescent current: {:.2f} mA".format(I_compensation))
+        run_test(0, setofN, "{:.0f}.csv".format(vcc))
 
-    columns = ["n", "sf", "bw", "cr", "pwr", "pa", "br [bits/s]", "t_est [s]", "t_meas [s]", "Q [mC]", "I_avg [mA]"]
-    output = pd.DataFrame(columns=columns)
-
-
-    for n in setofN:
-        print("index: {}".format(n))
-        message = "{}".format(n)
-        esp32.write(bytes(message, encoding='ascii')) ##Type conversion magic
-
-        response = read_esp()
-        settings = unpack(response)
-        
-        duration = float(settings[7].rstrip())/1000 #Gets the time in milliseconds
-        
-        i_avg, q, t_meas = Perfom_measurement(duration+500, I_compensation)
-        settings.extend([t_meas/1000, q, i_avg])
-        data = {}
-
-        data = {columns[i]: float(settings[i]) for i in range(len(settings))}
-        row = pd.DataFrame([data])  # Wrap the dictionary in a list to ensure proper DataFrame structure
-
-        output = pd.concat([output, row], ignore_index=True)
-        time.sleep(0.5)
-
-
-
-    output.to_csv("Test_Term_16ohm_100cm.csv")
 
     #Now we have the passive current draw so we can actually start looking at the transmission difference
 
