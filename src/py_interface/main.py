@@ -17,7 +17,7 @@ def extract_tx(signal, threshold):
     signal = np.asarray(signal)
 
     # indices where signal is above threshold
-    above = signal > threshold
+    above = signal > (threshold + (0.5*threshold))
 
     # find rising edge: False -> True
     start_candidates = np.where(np.diff(above.astype(int)) == 1)[0]
@@ -26,7 +26,9 @@ def extract_tx(signal, threshold):
 
     start_idx = start_candidates[0] + 1
 
-    # find falling edge: True -> False AFTER start
+
+    above = signal > (threshold)
+    # find falling edge: True -> False AFTER startthreshold
     end_candidates = np.where(
         np.diff(above[start_idx:].astype(int)) == -1
     )[0]
@@ -40,21 +42,20 @@ def extract_tx(signal, threshold):
 
 
 
-def cycle_settings(ppk2: PPK2_API, rfm: LoRaSerial, vcc):
-    #Set appropriate voltages
-    ppk2.get_modifiers()
+def cycle_settings(ppk2: PPK2_API, rfm: LoRaSerial, vcc: float, filename):
+
     ppk2.use_source_meter() 
-    ppk2.set_source_voltage(vcc)
+    ppk2.set_source_voltage(int(vcc))
     ppk2.toggle_DUT_power("ON")
-    time.sleep(0.2)
+    time.sleep(0.5)
     #Reset testbench
     rfm.reset()
-    time.sleep(0.2)
+    time.sleep(0.5)
     
     samples = []
 
 
-    print("sampling quietsent current")
+    print("sampling threshold current current")
     ppk2.start_measuring()
     # measurements are a constant stream of bytes
     # the number of measurements in one sampling period depends on the wait between serial reads
@@ -75,15 +76,30 @@ def cycle_settings(ppk2: PPK2_API, rfm: LoRaSerial, vcc):
     print("average current mean {:.2f} mA, std: {:.2f} mA".format(i_q, i_q_std))
     print("setting thres at: {:.2f}".format(i_thres))
     time.sleep(2)
+
+
+    results = {
+        "vcc": [],      #supply voltage [mV]
+        "sf": [],       #spreading factor
+        "bw": [],       #bandwidh [kHz]
+        "pwr": [],      #tx power in [dBm]
+        "cr": [],       #code rate x/7
+        "t_est": [],    #estimated time on air [ms]
+        "t_meas": [],   #measured time in high draw state [ms]
+        "i_q": [],      #current draw outside tx [mA]
+        "i_tx": []      #current draw in [mA]
+    }
+
     for sf, bw, tx_pwr, cr in product(spreading_factor, bandwidth, tx_power, code_rate):
-        #print(f"sf: {sf},\t bw: {bw},\t power: {tx_pwr},\t cr: {cr}")
+        
+  
         t_est = rfm.configure_and_transmit(sf, bw, tx_pwr, cr)
         
         ppk2.start_measuring()
         t_start = time.time()
         samples = []
-        #data sampling
-
+        
+        #data sampling af strømtræk
         while((time.time()- t_start) < (t_est/1000 + 0.2)):
             data = ppk2.get_data()
             if data != b'':
@@ -95,23 +111,43 @@ def cycle_settings(ppk2: PPK2_API, rfm: LoRaSerial, vcc):
         tx_sample, limits = extract_tx(samples, i_thres)
         t_meas = len(tx_sample)/100 #time in ms
         i_avg = np.average(tx_sample) /1000
+
+        ##alle de samples vi ikke var i tx
+        I_q_samples = (samples[:limits[0]], samples[limits[1]:])
         
-        plt.clf()
-        plt.grid(True)
-        plt.plot(np.arange(len(samples))/100,np.array(samples)/1000)
-        plt.xlabel("t [ms]")
-        plt.ylabel("I [mA]")
-        plt.plot([limits[0]/100, limits[0]/100], [0, max(tx_sample)/1000], linestyle=':', linewidth=3, color='black')
-        plt.plot([limits[1]/100, limits[1]/100], [0, max(tx_sample)/1000], linestyle=':', linewidth=3, color='black')
+        ##Finder vores averages
+        I_q_result = np.average(np.concatenate(I_q_samples))
+        I_tx_result = np.average(tx_sample)
+        
+    
+
+        results["sf"].append(sf)    
+        results["bw"].append(bw)    
+        results["pwr"].append(tx_pwr)    
+        results["cr"].append(cr)  
+        results["i_q"].append(I_q_result/1000) #converts uA to mA
+        results["i_tx"].append(I_tx_result/1000) #converts uA to mA
+        results["t_meas"].append(t_meas) #in milliseconds
+        results["t_est"].append(t_est / 1000) #converts us to ms
+        results["vcc"].append(vcc) #Vcc in mV
 
 
-        plt.ion()
-        plt.pause(0.1)        
-
-
-
+        if True:
+            plt.clf()
+            plt.grid(True)
+            plt.plot(np.arange(len(I_q_samples[0]))/100,np.array(I_q_samples[0])/1000, color="Blue")
+            plt.plot((np.arange(len(I_q_samples[1]))+limits[1])/100 ,np.array(I_q_samples[1])/1000, color="Blue")
+            plt.plot(np.linspace(limits[0]/100, limits[1]/100, len(tx_sample)),np.array(tx_sample)/1000, color="Red")
+            plt.xlabel("t [ms]")
+            plt.ylabel("I [mA]")
+            plt.ion()
+            plt.pause(0.1)        
+        else:
+            time.sleep(0.1)
         print("Results t_est: {:.2f} ms, \t, t_meas: {:.2f} ms, \t i_avg: {:.2f}".format(t_est, t_meas, i_avg))
-
+    final_data = pd.DataFrame(results)
+    final_data.to_csv(filename)
+   
 
 
 if __name__ == "__main__":
@@ -120,6 +156,10 @@ if __name__ == "__main__":
     print(ppk2s_connected)
 
     ppk2 = PPK2_API("/dev/ttyACM1")
+    #Set appropriate voltages
+    ppk2.get_modifiers()
     rfm  = LoRaSerial("/dev/ttyUSB0")
     time.sleep(1)
-    cycle_settings(ppk2, rfm, 2500)
+    for vcc in np.linspace(3300, 1800, 4):
+        cycle_settings(ppk2, rfm, vcc, f"test_{vcc}_-tempdeg.csv")
+        time.sleep(0.5) #Delay to not spam rfm and ppk2f"test_{vcc}.csv"
